@@ -1,0 +1,85 @@
+# Load Core Libraries
+library(tidyverse) # Data manipulation (dplyr) and ingestion (readr)
+library(sf)        # Spatial data core
+library(janitor)   # Name cleaning
+library(here)      # File path management
+library(tmap)      # Mapping visualization
+
+# --- Data Ingestion ---
+# 1. Read the GII attribute data (CSV)
+# Path needs to be correct for your setup
+gender_data_raw <- read_csv(here::here("data", "global_gender_inequality.csv"), 
+                            na = c("NA", "...", "NULL", "")) %>% 
+  janitor::clean_names() # The "cleaner" button
+
+# 2. Read the World map boundaries (GeoJSON)
+# Assuming the file is named world_boundaries.geojson
+world_map_raw <- st_read(here::here("data", "world_boundaries.geojson")) %>%
+  janitor::clean_names()
+# Assuming cleaned column names are: country, gii_2010, gii_2019
+
+gii_analysis <- gender_data_raw %>%
+  
+  # I. Select only the necessary columns for the calculation
+  dplyr::select(country, gii_2010, gii_2019) %>%
+  
+  # II. Calculate the difference (mutate)
+  mutate(
+    # gii_change > 0 means increase in inequality (worse)
+    # gii_change < 0 means decrease in inequality (better)
+    gii_change = gii_2019 - gii_2010
+  ) %>%
+  
+  # III. Create a categorical column for visualization (Classification)
+  mutate(
+    change_level = case_when(
+      gii_change >= 0.05 ~ "A_Significant Increase (Worse)", # Used 'A_' for sorting in the legend
+      gii_change > 0     ~ "B_Slight Increase (Worse)",
+      gii_change < 0     ~ "C_Decrease (Improvement)",
+      TRUE               ~ "D_No Data / No Change"
+    )
+  )
+
+# Review the calculated data
+# glimpse(gii_analysis)
+# --- Spatial Join ---
+# Crucial: The 'country' column must match in both datasets.
+world_gii_map <- world_map_raw %>%
+  
+  # left_join ensures all map features are kept, even if no GII data exists
+  left_join(
+    gii_analysis,
+    by = c("country" = "country") # Adjust 'country' column names if they differ
+  ) 
+
+# --- Map Visualization (tmap) ---
+# Set to static mode for standard output
+tmap_mode("plot")
+
+final_gii_map <- tm_shape(world_gii_map) +
+  
+  # Plotting the continuous change in GII
+  tm_polygons(
+    col = "gii_change", 
+    title = "GII Change (2010-2019)",
+    
+    # Setting color scheme: Red-Blue diverging palette
+    palette = "RdBu",       # Red (Worse) <-> Blue (Better)
+    style = "cont",         # Continuous gradient
+    midpoint = 0,           # Zero change is the neutral color
+    
+    # Handle missing data (countries not in the GII data)
+    na.color = "gray80",
+    textNA = "No GII Data"
+  ) +
+  
+  # Add Layout Elements
+  tm_layout(
+    title = "Global Gender Inequality Index Change (2010-2019)",
+    legend.outside = TRUE,
+    frame = FALSE,
+    bg.color = "white"
+  )
+
+# Output the map object (This is your final deliverable image)
+# final_gii_map
